@@ -1,17 +1,40 @@
+import java.lang.Math.abs
 import java.util.*
+
+enum class ActionType {
+    CAST, OPPONENT_CAST, BREW
+}
 
 //region objects definitaion
 data class Action(
-    val actionId: Int, val actionType: String, val delta0: Int, val delta1: Int, val delta2: Int,
+    val actionId: Int, val actionType: ActionType, val delta0: Int, val delta1: Int, val delta2: Int,
     val delta3: Int, val price: Int, val tomeIndex: Int, val taxCount: Int, val castable: Boolean,
     val repeatable: Boolean
-)
+) {
+    val deltas: Array<Int> by lazy { arrayOf(delta0, delta1, delta2, delta3) }
+
+    val totalDelta: Int by lazy { delta0 + delta1 + delta2 + delta3 }
+
+    val onlyPositive: Boolean by lazy {
+        deltas.all { it >= 0 }
+    }
+
+    fun available(player: Player): Boolean {
+        // NOTE: all opponents casts are not available even for him for now
+        return actionType != ActionType.OPPONENT_CAST &&
+                (delta0 > 0 || player.inv0 + delta0 >= 0) &&
+                (delta1 > 0 || player.inv1 + delta1 >= 0) &&
+                (delta2 > 0 || player.inv2 + delta2 >= 0) &&
+                (delta3 > 0 || player.inv3 + delta3 >= 0) &&
+                actionType != ActionType.CAST || castable
+    }
+}
 
 data class Player(val inv0: Int, val inv1: Int, val inv2: Int, val inv3: Int, val score: Int) {
     companion object {
         //BREW <id> | WAIT; later: BREW <id> | CAST <id> [<times>] | LEARN <id> | REST | WAIT
         fun play(action: Action, times: Int = 1) {
-            if (action.castable) {
+            if (action.actionType == ActionType.CAST) {
                 if (action.repeatable) {
                     println("CAST ${action.actionId} $times")
                 } else {
@@ -47,7 +70,8 @@ fun main(args: Array<String>) {
         val actions: List<Action> = sequence {
             for (i in 0 until actionCount) {
                 val actionId = input.nextInt() // the unique ID of this spell or recipe
-                val actionType = input.next() // in the first league: BREW; later: CAST, OPPONENT_CAST, LEARN, BREW
+                val actionType =
+                    ActionType.valueOf(input.next()) // in the first league: BREW; later: CAST, OPPONENT_CAST, LEARN, BREW
                 val delta0 = input.nextInt() // tier-0 ingredient change
                 val delta1 = input.nextInt() // tier-1 ingredient change
                 val delta2 = input.nextInt() // tier-2 ingredient change
@@ -81,12 +105,24 @@ fun main(args: Array<String>) {
         }.toList()
         val me = players[0]
         val opponent = players[1]
+        val brews by lazy { actions.filter { it.actionType == ActionType.BREW } }
+        val casts by lazy { actions.filter { it.actionType == ActionType.CAST } }
         //endregion
 
         // Write an action using println()
         // To debug: System.err.println("Debug messages...");
 
+        val bestAvailableAction =
+            brews.filter { it.available(me) }.maxBy { it.price.toFloat() / abs(it.totalDelta) }
+
+        val anyAvailableCast by lazy { casts.find { it.available(me) } }
+
+        val bestAction = bestAvailableAction ?: anyAvailableCast
+
         // in the first league: BREW <id> | WAIT; later: BREW <id> | CAST <id> [<times>] | LEARN <id> | REST | WAIT
-        Player.play(actions.random())
+        bestAction?.also {
+            System.err.println("I will play action $it");
+            Player.play(it)
+        } ?: Player.rest()
     }
 }
