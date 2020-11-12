@@ -26,11 +26,13 @@ data class Action(
                 (delta1 > 0 || player.inv1 + delta1 >= 0) &&
                 (delta2 > 0 || player.inv2 + delta2 >= 0) &&
                 (delta3 > 0 || player.inv3 + delta3 >= 0) &&
-                actionType != ActionType.CAST || castable
+                (totalDelta + player.totalInv <= 10) &&
+                (actionType != ActionType.CAST || castable)
     }
 }
 
 data class Player(val inv0: Int, val inv1: Int, val inv2: Int, val inv3: Int, val score: Int) {
+    val totalInv by lazy {inv0 + inv1 + inv2}
     companion object {
         //BREW <id> | WAIT; later: BREW <id> | CAST <id> [<times>] | LEARN <id> | REST | WAIT
         fun play(action: Action, times: Int = 1) {
