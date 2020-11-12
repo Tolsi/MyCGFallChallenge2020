@@ -1,11 +1,41 @@
 import java.lang.Math.abs
 import java.util.*
 
+//region objects definitaion
+
+sealed class Move {
+    abstract val asText: String
+}
+
+object Wait : Move() {
+    override val asText: String = "WAIT"
+}
+
+object Rest : Move() {
+    override val asText: String = "REST"
+}
+
+data class Play(val action: Action, val times: Int = 1) : Move() {
+    override val asText: kotlin.String
+        get() = if (action.actionType == ActionType.CAST) {
+            if (action.repeatable) {
+                "CAST ${action.actionId} $times"
+            } else {
+                "CAST ${action.actionId}"
+            }
+        } else {
+            "BREW ${action.actionId}"
+        }
+}
+
+data class Learn(val action: Action) : Move() {
+    override val asText: String = "LEARN ${action.actionId}"
+}
+
 enum class ActionType {
     CAST, OPPONENT_CAST, BREW
 }
 
-//region objects definitaion
 data class Action(
     val actionId: Int, val actionType: ActionType, val delta0: Int, val delta1: Int, val delta2: Int,
     val delta3: Int, val price: Int, val tomeIndex: Int, val taxCount: Int, val castable: Boolean,
@@ -32,35 +62,53 @@ data class Action(
 }
 
 data class Player(val inv0: Int, val inv1: Int, val inv2: Int, val inv3: Int, val score: Int) {
-    val totalInv by lazy {inv0 + inv1 + inv2}
-    companion object {
+    val totalInv by lazy { inv0 + inv1 + inv2 }
+}
+
+data class GameState(val me: Player, val opponent: Player, val actions: List<Action>, val moves: List<Move>)
+
+sealed class Simulation {
+    abstract fun makeMove(currentState: GameState, m: Move): GameState?
+}
+
+object RealGame : Simulation() {
+    override fun makeMove(currentState: GameState, m: Move): GameState? {
         //BREW <id> | WAIT; later: BREW <id> | CAST <id> [<times>] | LEARN <id> | REST | WAIT
-        fun play(action: Action, times: Int = 1) {
-            if (action.actionType == ActionType.CAST) {
-                if (action.repeatable) {
-                    println("CAST ${action.actionId} $times")
-                } else {
-                    println("CAST ${action.actionId}")
-                }
-            } else {
-                println("BREW ${action.actionId}")
-            }
-        }
-
-        fun nothing() {
-            println("WAIT")
-        }
-
-        fun learn(action: Action) {
-            println("LEARN ${action.actionId}")
-        }
-
-        fun rest() {
-            println("REST")
-        }
+        println(m.asText)
+        return null
     }
 }
 //endregion
+
+object FastSimulation : Simulation() {
+    fun allowedMoves(currentState: GameState): List<Move> {
+        TODO()
+    }
+
+    override fun makeMove(currentState: GameState, m: Move): GameState? {
+        val currentStateWithMove = currentState.copy(moves = currentState.moves.plus(m))
+        return when (m) {
+            Wait ->
+                currentStateWithMove
+            Rest ->
+                currentStateWithMove.copy(actions = currentStateWithMove.actions.map {
+                    if (it.actionType == ActionType.CAST) it.copy(
+                        castable = true
+                    ) else it
+                })
+            is Play -> {
+                currentStateWithMove.copy(me = currentState.me.copy(
+                    inv0 = currentState.me.inv0 + m.action.delta0 * m.times,
+                    inv1 = currentState.me.inv1 + m.action.delta1 * m.times,
+                    inv2 = currentState.me.inv2 + m.action.delta2 * m.times,
+                    inv3 = currentState.me.inv3 + m.action.delta3 * m.times,
+                    score = currentState.me.score + m.action.price * m.times
+                ), actions = currentStateWithMove.actions.minus(m.action))
+            }
+            else -> TODO()
+        }
+    }
+}
 
 fun main(args: Array<String>) {
     val input = Scanner(System.`in`)
@@ -109,6 +157,7 @@ fun main(args: Array<String>) {
         val opponent = players[1]
         val brews by lazy { actions.filter { it.actionType == ActionType.BREW } }
         val casts by lazy { actions.filter { it.actionType == ActionType.CAST } }
+        val currentState = GameState(me, opponent, actions, emptyList())
         //endregion
 
         // Write an action using println()
@@ -122,9 +171,9 @@ fun main(args: Array<String>) {
         val bestAction = bestAvailableAction ?: anyAvailableCast
 
         // in the first league: BREW <id> | WAIT; later: BREW <id> | CAST <id> [<times>] | LEARN <id> | REST | WAIT
-        bestAction?.also {
+        RealGame.makeMove(currentState, bestAction?.let {
             System.err.println("I will play action $it");
-            Player.play(it)
-        } ?: Player.rest()
+            Play(it)
+        } ?: Rest)
     }
 }
