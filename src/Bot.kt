@@ -1,22 +1,48 @@
 import java.util.*
 
+//region objects definitaion
 data class Action(
     val actionId: Int, val actionType: String, val delta0: Int, val delta1: Int, val delta2: Int,
     val delta3: Int, val price: Int, val tomeIndex: Int, val taxCount: Int, val castable: Boolean,
     val repeatable: Boolean
 )
 
-data class Player(val inv0: Int, val inv1: Int, val inv2: Int, val inv3: Int, val score: Int)
+data class Player(val inv0: Int, val inv1: Int, val inv2: Int, val inv3: Int, val score: Int) {
+    companion object {
+        //BREW <id> | WAIT; later: BREW <id> | CAST <id> [<times>] | LEARN <id> | REST | WAIT
+        fun play(action: Action, times: Int = 1) {
+            if (action.castable) {
+                if (action.repeatable) {
+                    println("CAST ${action.actionId} $times")
+                } else {
+                    println("CAST ${action.actionId}")
+                }
+            } else {
+                println("BREW ${action.actionId}")
+            }
+        }
 
-/**
- * Auto-generated code below aims at helping you parse
- * the standard input according to the problem statement.
- **/
+        fun nothing() {
+            println("WAIT")
+        }
+
+        fun learn(action: Action) {
+            println("LEARN ${action.actionId}")
+        }
+
+        fun rest() {
+            println("REST")
+        }
+    }
+}
+//endregion
+
 fun main(args: Array<String>) {
     val input = Scanner(System.`in`)
 
     // game loop
     while (true) {
+        //region Read objects
         val actionCount = input.nextInt() // the number of spells and recipes in play
         val actions: List<Action> = sequence {
             for (i in 0 until actionCount) {
@@ -55,12 +81,12 @@ fun main(args: Array<String>) {
         }.toList()
         val me = players[0]
         val opponent = players[1]
+        //endregion
 
         // Write an action using println()
         // To debug: System.err.println("Debug messages...");
-        System.err.println("${actions} ${players}");
 
         // in the first league: BREW <id> | WAIT; later: BREW <id> | CAST <id> [<times>] | LEARN <id> | REST | WAIT
-        println("BREW 0")
+        Player.play(actions.random())
     }
 }
