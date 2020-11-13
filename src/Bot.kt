@@ -1,3 +1,4 @@
+import java.io.InputStream
 import java.lang.Math.abs
 import java.util.*
 
@@ -32,7 +33,7 @@ data class Learn(val action: Action) : Move() {
 }
 
 enum class ActionType {
-    CAST, OPPONENT_CAST, BREW
+    CAST, OPPONENT_CAST, BREW, LEARN
 }
 
 data class Action(
@@ -54,7 +55,9 @@ data class Action(
 
     fun available(player: Player): Int {
         // NOTE: all opponents casts are not available even for him for now
-        return if (actionType != ActionType.OPPONENT_CAST &&
+        return if (
+            actionType != ActionType.OPPONENT_CAST &&
+            actionType != ActionType.LEARN &&
             (delta0 > 0 || player.inv0 + delta0 >= 0) &&
             (delta1 > 0 || player.inv1 + delta1 >= 0) &&
             (delta2 > 0 || player.inv2 + delta2 >= 0) &&
@@ -76,9 +79,10 @@ data class Action(
 data class Player(val inv0: Int, val inv1: Int, val inv2: Int, val inv3: Int, val score: Int) {
     val totalInv by lazy { inv0 + inv1 + inv2 + inv3 }
     val invsScore by lazy { inv1 + inv2 + inv3 }
+    val totalScore by lazy { score + invsScore }
 }
 
-data class GameState(val me: Player, val opponent: Player, val actions: List<Action>, val moves: List<Move>) {
+data class GameState(val step: Int, val me: Player, val opponent: Player, val actions: List<Action>) {
     val brews by lazy { actions.filter { it.actionType == ActionType.BREW } }
     val casts by lazy { actions.filter { it.actionType == ActionType.CAST } }
 }
@@ -105,40 +109,63 @@ object FastSimulation : Simulation() {
     }
 
     override fun makeMove(currentState: GameState, m: Move): GameState? {
-        val currentStateWithMove = currentState.copy(moves = currentState.moves.plus(m))
         return when (m) {
             Wait ->
-                currentStateWithMove
+                currentState
             Rest ->
-                currentStateWithMove.copy(actions = currentStateWithMove.actions.map {
+                currentState.copy(actions = currentState.actions.map {
                     if (it.actionType == ActionType.CAST) it.copy(
                         castable = true
                     ) else it
                 })
             is Play -> {
-                val currentStateAfterAction = currentStateWithMove.copy(
+                val currentStateAfterAction = currentState.copy(
                     me = currentState.me.copy(
                         inv0 = currentState.me.inv0 + m.action.delta0 * m.times,
                         inv1 = currentState.me.inv1 + m.action.delta1 * m.times,
                         inv2 = currentState.me.inv2 + m.action.delta2 * m.times,
                         inv3 = currentState.me.inv3 + m.action.delta3 * m.times,
                         score = currentState.me.score + m.action.price * m.times
-                    ), actions = currentStateWithMove.actions.minus(m.action)
+                    ), actions = currentState.actions.minus(m.action)
                 )
                 if (m.action.actionType == ActionType.CAST) {
-                    currentStateAfterAction.copy(actions = currentStateWithMove.actions.plus(m.action.copy(castable = false)))
+                    currentStateAfterAction.copy(actions = currentState.actions.plus(m.action.copy(castable = false)))
                 } else currentStateAfterAction
             }
             else -> TODO()
         }
     }
+
+    private fun makeAllAllowedMoves(gameState: GameState, moves: List<Move> = emptyList()): List<Pair<List<Move>, GameState>> {
+        return allowedMoves(gameState).map { moves + it to makeMove(gameState, it)!! }
+    }
+
+    fun findBestMove(gameState: GameState, depth: Int): Pair<List<Move>, GameState> {
+        val moves =  (0..depth).fold(emptyList<Pair<List<Move>, GameState>>() to listOf(emptyList<Move>() to gameState)) {
+                current, i ->
+            val nextMoves = current.second.flatMap { makeAllAllowedMoves(it.second, it.first) }
+            (if (i > 0) { current.first.plus(current.second) } else current.first) to nextMoves
+        }.first
+        return moves.maxBy { (it.second.me.score - gameState.me.score) / it.first.size }!!
+    }
+}
+
+fun botStep(currentState: GameState): Move {
+    val bestAction = FastSimulation.findBestMove(currentState, 5)
+
+    return bestAction.first.firstOrNull()?.let {
+        System.err.println("I will play move $it");
+        it
+    } ?: Rest
 }
 
 fun main(args: Array<String>) {
     val input = Scanner(System.`in`)
 
+    var step = 0
     // game loop
     while (true) {
+        step++;
         //region Read objects
         val actionCount = input.nextInt() // the number of spells and recipes in play
         val actions: List<Action> = sequence {
@@ -177,24 +204,13 @@ fun main(args: Array<String>) {
                 yield(Player(inv0, inv1, inv2, inv3, score))
             }
         }.toList()
-        val currentState = GameState(players[0], players[1], actions, emptyList())
+        val currentState = GameState(step, players[0], players[1], actions)
         //endregion
 
         // Write an action using println()
         // To debug: System.err.println("Debug messages...");
 
-        val bestAvailableAction =
-            currentState.brews.filter { it.available(currentState.me) > 0 }
-                .maxBy { it.price.toFloat() / abs(it.totalDelta) }
-
-        val anyAvailableCast by lazy { currentState.casts.find { it.available(currentState.me) > 0 } }
-
-        val bestAction = bestAvailableAction ?: anyAvailableCast
-
         // in the first league: BREW <id> | WAIT; later: BREW <id> | CAST <id> [<times>] | LEARN <id> | REST | WAIT
-        RealGame.makeMove(currentState, bestAction?.let {
-            System.err.println("I will play action $it");
-            Play(it)
-        } ?: Rest)
+        RealGame.makeMove(currentState, botStep(currentState))
     }
 }
