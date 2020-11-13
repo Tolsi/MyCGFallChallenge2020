@@ -1,5 +1,3 @@
-import java.io.InputStream
-import java.lang.Math.abs
 import java.util.*
 
 //region objects definition
@@ -57,7 +55,6 @@ data class Action(
         // NOTE: all opponents casts are not available even for him for now
         return if (
             actionType != ActionType.OPPONENT_CAST &&
-            actionType != ActionType.LEARN &&
             (delta0 > 0 || player.inv0 + delta0 >= 0) &&
             (delta1 > 0 || player.inv1 + delta1 >= 0) &&
             (delta2 > 0 || player.inv2 + delta2 >= 0) &&
@@ -66,10 +63,11 @@ data class Action(
         ) {
             when (actionType) {
                 ActionType.CAST -> if (castable) {
-                    if (repeatable) {
-                        (1..10).filter { availableTimes(it, player) }.max() ?: 0
-                    } else 1
-                } else 0
+                        if (repeatable) {
+                            (1..10).filter { availableTimes(it, player) }.max() ?: 0
+                        } else 1
+                    } else 0
+                ActionType.LEARN -> if (player.inv0 - tomeIndex >= 0) 1 else 0
                 else -> 1
             }
         } else 0
@@ -101,11 +99,22 @@ object RealGame : Simulation() {
 //endregion
 
 object FastSimulation : Simulation() {
+    // TODO: учитывать предыдущие ходы, не больше двух REST
     fun allowedMoves(currentState: GameState): List<Move> {
-        return currentState.actions.map { a ->
+        return currentState.actions.flatMap { a ->
             val times = a.available(currentState.me)
-            Play(a, times).takeIf { times > 0 }
-        }.filterNotNull().plus(Rest)
+            if (times == 1) {
+                if (a.actionType == ActionType.LEARN) {
+                    listOf(Learn(a))
+                } else {
+                    listOf(Play(a))
+                }
+            } else if (times > 1) {
+                (1..times).map { Play(a, it) }
+            } else {
+                emptyList()
+            }
+        }.plus(Rest)
     }
 
     override fun makeMove(currentState: GameState, m: Move): GameState? {
@@ -118,6 +127,11 @@ object FastSimulation : Simulation() {
                         castable = true
                     ) else it
                 })
+            is Learn ->
+                currentState.copy(
+                    actions = currentState.actions.minus(m.action)
+                        .plus(m.action.copy(actionType = ActionType.CAST, castable = true))
+                )
             is Play -> {
                 val currentStateAfterAction = currentState.copy(
                     me = currentState.me.copy(
@@ -137,7 +151,8 @@ object FastSimulation : Simulation() {
     }
 
     private fun makeAllAllowedMoves(gameState: GameState, moves: List<Move> = emptyList()): List<Pair<List<Move>, GameState>> {
-        return allowedMoves(gameState).map { moves + it to makeMove(gameState, it)!! }
+        // TODO random take 5!
+        return allowedMoves(gameState).shuffled().take(5).map { moves + it to makeMove(gameState, it)!! }
     }
 
     fun findBestMove(gameState: GameState, depth: Int): Pair<List<Move>, GameState> {
@@ -151,6 +166,7 @@ object FastSimulation : Simulation() {
 }
 
 fun botStep(currentState: GameState): Move {
+    // TODO small depth!
     val bestAction = FastSimulation.findBestMove(currentState, 5)
 
     return bestAction.first.firstOrNull()?.let {
