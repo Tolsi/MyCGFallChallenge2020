@@ -1,8 +1,7 @@
 import java.lang.Math.abs
 import java.util.*
 
-//region objects definitaion
-
+//region objects definition
 sealed class Move {
     abstract val asText: String
 }
@@ -45,27 +44,44 @@ data class Action(
 
     val totalDelta: Int by lazy { delta0 + delta1 + delta2 + delta3 }
 
-    val onlyPositive: Boolean by lazy {
-        deltas.all { it >= 0 }
+    fun availableTimes(times: Int, player: Player): Boolean {
+        return (delta0 * times > 0 || player.inv0 + delta0 * times >= 0) &&
+                (delta1 * times > 0 || player.inv1 + delta1 * times >= 0) &&
+                (delta2 * times > 0 || player.inv2 + delta2 * times >= 0) &&
+                (delta3 * times > 0 || player.inv3 + delta3 * times >= 0) &&
+                (totalDelta * times + player.totalInv <= 10)
     }
 
-    fun available(player: Player): Boolean {
+    fun available(player: Player): Int {
         // NOTE: all opponents casts are not available even for him for now
-        return actionType != ActionType.OPPONENT_CAST &&
-                (delta0 > 0 || player.inv0 + delta0 >= 0) &&
-                (delta1 > 0 || player.inv1 + delta1 >= 0) &&
-                (delta2 > 0 || player.inv2 + delta2 >= 0) &&
-                (delta3 > 0 || player.inv3 + delta3 >= 0) &&
-                (totalDelta + player.totalInv <= 10) &&
-                (actionType != ActionType.CAST || castable)
+        return if (actionType != ActionType.OPPONENT_CAST &&
+            (delta0 > 0 || player.inv0 + delta0 >= 0) &&
+            (delta1 > 0 || player.inv1 + delta1 >= 0) &&
+            (delta2 > 0 || player.inv2 + delta2 >= 0) &&
+            (delta3 > 0 || player.inv3 + delta3 >= 0) &&
+            (totalDelta + player.totalInv <= 10)
+        ) {
+            when (actionType) {
+                ActionType.CAST -> if (castable) {
+                    if (repeatable) {
+                        (1..10).filter { availableTimes(it, player) }.max() ?: 0
+                    } else 1
+                } else 0
+                else -> 1
+            }
+        } else 0
     }
 }
 
 data class Player(val inv0: Int, val inv1: Int, val inv2: Int, val inv3: Int, val score: Int) {
-    val totalInv by lazy { inv0 + inv1 + inv2 }
+    val totalInv by lazy { inv0 + inv1 + inv2 + inv3 }
+    val invsScore by lazy { inv1 + inv2 + inv3 }
 }
 
-data class GameState(val me: Player, val opponent: Player, val actions: List<Action>, val moves: List<Move>)
+data class GameState(val me: Player, val opponent: Player, val actions: List<Action>, val moves: List<Move>) {
+    val brews by lazy { actions.filter { it.actionType == ActionType.BREW } }
+    val casts by lazy { actions.filter { it.actionType == ActionType.CAST } }
+}
 
 sealed class Simulation {
     abstract fun makeMove(currentState: GameState, m: Move): GameState?
@@ -82,7 +98,10 @@ object RealGame : Simulation() {
 
 object FastSimulation : Simulation() {
     fun allowedMoves(currentState: GameState): List<Move> {
-        TODO()
+        return currentState.actions.map { a ->
+            val times = a.available(currentState.me)
+            Play(a, times).takeIf { times > 0 }
+        }.filterNotNull().plus(Rest)
     }
 
     override fun makeMove(currentState: GameState, m: Move): GameState? {
@@ -97,13 +116,18 @@ object FastSimulation : Simulation() {
                     ) else it
                 })
             is Play -> {
-                currentStateWithMove.copy(me = currentState.me.copy(
-                    inv0 = currentState.me.inv0 + m.action.delta0 * m.times,
-                    inv1 = currentState.me.inv1 + m.action.delta1 * m.times,
-                    inv2 = currentState.me.inv2 + m.action.delta2 * m.times,
-                    inv3 = currentState.me.inv3 + m.action.delta3 * m.times,
-                    score = currentState.me.score + m.action.price * m.times
-                ), actions = currentStateWithMove.actions.minus(m.action))
+                val currentStateAfterAction = currentStateWithMove.copy(
+                    me = currentState.me.copy(
+                        inv0 = currentState.me.inv0 + m.action.delta0 * m.times,
+                        inv1 = currentState.me.inv1 + m.action.delta1 * m.times,
+                        inv2 = currentState.me.inv2 + m.action.delta2 * m.times,
+                        inv3 = currentState.me.inv3 + m.action.delta3 * m.times,
+                        score = currentState.me.score + m.action.price * m.times
+                    ), actions = currentStateWithMove.actions.minus(m.action)
+                )
+                if (m.action.actionType == ActionType.CAST) {
+                    currentStateAfterAction.copy(actions = currentStateWithMove.actions.plus(m.action.copy(castable = false)))
+                } else currentStateAfterAction
             }
             else -> TODO()
         }
@@ -153,20 +177,17 @@ fun main(args: Array<String>) {
                 yield(Player(inv0, inv1, inv2, inv3, score))
             }
         }.toList()
-        val me = players[0]
-        val opponent = players[1]
-        val brews by lazy { actions.filter { it.actionType == ActionType.BREW } }
-        val casts by lazy { actions.filter { it.actionType == ActionType.CAST } }
-        val currentState = GameState(me, opponent, actions, emptyList())
+        val currentState = GameState(players[0], players[1], actions, emptyList())
         //endregion
 
         // Write an action using println()
         // To debug: System.err.println("Debug messages...");
 
         val bestAvailableAction =
-            brews.filter { it.available(me) }.maxBy { it.price.toFloat() / abs(it.totalDelta) }
+            currentState.brews.filter { it.available(currentState.me) > 0 }
+                .maxBy { it.price.toFloat() / abs(it.totalDelta) }
 
-        val anyAvailableCast by lazy { casts.find { it.available(me) } }
+        val anyAvailableCast by lazy { currentState.casts.find { it.available(currentState.me) > 0 } }
 
         val bestAction = bestAvailableAction ?: anyAvailableCast
 
