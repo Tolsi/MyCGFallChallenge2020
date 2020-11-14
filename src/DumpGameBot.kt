@@ -5,7 +5,7 @@ fun main() {
 
     // game loop
     while (true) {
-        val actionCount = input.nextInt()
+        val actionCount = input.nextLine().toInt()
         (0 until actionCount+2).forEach {
             System.err.println(input.nextLine())
         }
