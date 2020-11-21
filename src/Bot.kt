@@ -1,4 +1,5 @@
 import java.util.*
+import kotlin.collections.ArrayList
 
 //region objects definition
 sealed class Move {
@@ -51,7 +52,7 @@ data class Action(
                 (totalDelta * times + player.totalInv <= 10)
     }
 
-    fun available(player: Player): Int {
+    fun canBePlayedTimes(player: Player): Int {
         // NOTE: all opponents casts are not available even for him for now
         return if (
             actionType != ActionType.OPPONENT_CAST &&
@@ -100,9 +101,9 @@ object RealGame : Simulation() {
 
 object FastSimulation : Simulation() {
     // TODO: учитывать предыдущие ходы, не больше двух REST
-    fun allowedMoves(currentState: GameState): List<Move> {
-        return currentState.actions.flatMap { a ->
-            val times = a.available(currentState.me)
+    fun allowedMoves(currentState: GameState, prevMoves: List<Move>): List<Move> {
+        val moves0 = currentState.actions.flatMap { a ->
+            val times = a.canBePlayedTimes(currentState.me)
             if (times == 1) {
                 if (a.actionType == ActionType.LEARN) {
                     listOf(Learn(a))
@@ -114,7 +115,13 @@ object FastSimulation : Simulation() {
             } else {
                 emptyList()
             }
-        }.plus(Rest)
+        }
+
+        val moves1 = if (prevMoves.lastOrNull()?.let { it == Rest } ?: false) {
+            moves0
+        } else moves0.plus(Rest)
+
+        return moves1
     }
 
     override fun makeMove(currentState: GameState, m: Move): GameState? {
@@ -150,9 +157,9 @@ object FastSimulation : Simulation() {
         }
     }
 
-    private fun makeAllAllowedMoves(gameState: GameState, moves: List<Move> = emptyList()): List<Pair<List<Move>, GameState>> {
+    private fun makeAllAllowedMoves(gameState: GameState, moves: List<Move> = ArrayList()): List<Pair<List<Move>, GameState>> {
         // TODO random take 5!
-        return allowedMoves(gameState).shuffled().take(5).map { moves + it to makeMove(gameState, it)!! }
+        return allowedMoves(gameState, moves).shuffled().take(5).map { moves + it to makeMove(gameState, it)!! }
     }
 
     fun findBestMove(gameState: GameState, depth: Int): Pair<List<Move>, GameState> {
