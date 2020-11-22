@@ -52,30 +52,31 @@ data class Action(
                 (totalDelta * times + player.totalInv <= 10)
     }
 
-    fun canBePlayedTimes(player: Player): Int {
+    fun canBePlayedTimes(currentState: GameState): Int {
         // NOTE: all opponents casts are not available even for him for now
-        return if (
-            actionType != ActionType.OPPONENT_CAST &&
-            (delta0 > 0 || player.inv0 + delta0 >= 0) &&
-            (delta1 > 0 || player.inv1 + delta1 >= 0) &&
-            (delta2 > 0 || player.inv2 + delta2 >= 0) &&
-            (delta3 > 0 || player.inv3 + delta3 >= 0) &&
-            (totalDelta + player.totalInv <= 10)
-        ) {
-            when (actionType) {
-                ActionType.CAST -> if (castable) {
-                        if (repeatable) {
-                            (1..10).filter { availableTimes(it, player) }.max() ?: 0
-                        } else 1
-                    } else 0
-                ActionType.LEARN -> if (player.inv0 - tomeIndex >= 0) 1 else 0
-                else -> 1
-            }
-        } else 0
+        return when (actionType) {
+            ActionType.CAST -> if (castable &&
+                (delta0 > 0 || currentState.me.inv0 + delta0 >= 0) &&
+                (delta1 > 0 || currentState.me.inv1 + delta1 >= 0) &&
+                (delta2 > 0 || currentState.me.inv2 + delta2 >= 0) &&
+                (delta3 > 0 || currentState.me.inv3 + delta3 >= 0) &&
+                (totalDelta + currentState.me.totalInv <= 10)) {
+                if (repeatable) {
+                    (1..10).filter { availableTimes(it, currentState.me) }.max() ?: 0
+                } else 1
+            } else 0
+            ActionType.BREW -> if ((delta0 > 0 || currentState.me.inv0 + delta0 >= 0) &&
+                (delta1 > 0 || currentState.me.inv1 + delta1 >= 0) &&
+                (delta2 > 0 || currentState.me.inv2 + delta2 >= 0) &&
+                (delta3 > 0 || currentState.me.inv3 + delta3 >= 0) &&
+                (totalDelta + currentState.me.totalInv <= 10)) 1 else 0
+            ActionType.LEARN -> if (currentState.step < 20 && currentState.me.inv0 - tomeIndex >= 0) 1 else 0
+            else -> 0
+        }
     }
 }
 
-data class Player(val inv0: Int, val inv1: Int, val inv2: Int, val inv3: Int, val score: Int) {
+data class Player(val inv0: Int, val inv1: Int, val inv2: Int, val inv3: Int, val score: Int, val potions: Int) {
     val totalInv by lazy { inv0 + inv1 + inv2 + inv3 }
     val invsScore by lazy { inv1 + inv2 + inv3 }
     val totalScore by lazy { score + invsScore }
@@ -84,6 +85,8 @@ data class Player(val inv0: Int, val inv1: Int, val inv2: Int, val inv3: Int, va
 data class GameState(val step: Int, val me: Player, val opponent: Player, val actions: List<Action>) {
     val brews by lazy { actions.filter { it.actionType == ActionType.BREW } }
     val casts by lazy { actions.filter { it.actionType == ActionType.CAST } }
+    val opponentCasts by lazy { actions.filter { it.actionType == ActionType.OPPONENT_CAST } }
+    val learns by lazy { actions.filter { it.actionType == ActionType.LEARN } }
 }
 
 sealed class Simulation {
@@ -101,8 +104,8 @@ object RealGame : Simulation() {
         return botStep(
             GameState(
                 1,
-                Player(3, 0, 0, 0, 0),
-                Player(3, 0, 0, 0, 0),
+                Player(3, 0, 0, 0, 0, 0),
+                Player(3, 0, 0, 0, 0, 0),
                 listOf(
                     Action(70, ActionType.BREW, -2, -2, 0, -2, 15, -1, -1, false, false),
                     Action(72, ActionType.BREW, 0, -2, -2, -2, 19, -1, -1, false, false),
@@ -134,10 +137,14 @@ object FastSimulation : Simulation() {
                     else -> false
                 }
             } ?: false
-            if (untilBrew || prevMoves.size > 7) {
+            if (untilBrew ||
+                prevMoves.size > 7 ||
+                currentState.me.potions >= 6 ||
+                currentState.step > 100
+            ) {
                 emptyList()
             } else {
-                val times = a.canBePlayedTimes(currentState.me)
+                val times = a.canBePlayedTimes(currentState)
                 if (times == 1) {
                     if (a.actionType == ActionType.LEARN) {
                         listOf(Learn(a))
@@ -164,18 +171,24 @@ object FastSimulation : Simulation() {
             Wait ->
                 currentState
             Rest ->
-                currentState.copy(actions = currentState.actions.map {
-                    if (it.actionType == ActionType.CAST) it.copy(
-                        castable = true
-                    ) else it
-                })
+                currentState.copy(step = currentState.step + 1,
+                    actions = currentState.actions.map {
+                        if (it.actionType == ActionType.CAST) it.copy(
+                            castable = true
+                        ) else it
+                    })
             is Learn ->
                 currentState.copy(
+                    step = currentState.step + 1,
+                    me = currentState.me.copy(
+                        inv0 = currentState.me.inv0 + m.action.taxCount - m.action.tomeIndex
+                    ),
                     actions = currentState.actions.minus(m.action)
                         .plus(m.action.copy(actionType = ActionType.CAST, castable = true))
                 )
             is Play -> {
                 val currentStateAfterAction = currentState.copy(
+                    step = currentState.step + 1,
                     me = currentState.me.copy(
                         inv0 = currentState.me.inv0 + m.action.delta0 * m.times,
                         inv1 = currentState.me.inv1 + m.action.delta1 * m.times,
@@ -186,6 +199,8 @@ object FastSimulation : Simulation() {
                 )
                 if (m.action.actionType == ActionType.CAST) {
                     currentStateAfterAction.copy(actions = currentStateAfterAction.actions.plus(m.action.copy(castable = false)))
+                } else if (m.action.actionType == ActionType.BREW) {
+                    currentStateAfterAction.copy(me = currentStateAfterAction.me.copy(potions = currentStateAfterAction.me.potions + 1))
                 } else currentStateAfterAction
             }
             else -> TODO()
@@ -200,12 +215,12 @@ object FastSimulation : Simulation() {
     }
 
     var bestFound: Pair<List<Move>, GameState>? = null
-    var bestValue: Int = -100000
+    var bestValue: Int = Int.MIN_VALUE
     var seen: Int = 0
 
     fun resetState() {
         bestFound = null
-        bestValue = -100000
+        bestValue = Int.MIN_VALUE
         seen = 0
     }
 
@@ -226,14 +241,21 @@ object FastSimulation : Simulation() {
         loop@ while (true) {
             val stepStart = System.currentTimeMillis()
 
-            for (i in 0 until 50) {
+            for (i in 0 until 100) {
                 val current = q.poll()
 
                 if (current != null) {
-                    val nextStates = makeAllAllowedMoves(current.second, current.first)
-                    q.addAll(nextStates)
+                    if (q.size < 2000) {
+                        val nextStates = makeAllAllowedMoves(current.second, current.first)
+                        q.addAll(nextStates)
+                    }
 
-                    val currentScore =
+                    val currentScore = if (current.second.me.potions == 6 && current.first.lastOrNull()?.let {
+                            when (it) {
+                                is Play -> it.action.actionType == ActionType.BREW && current.second.me.totalScore > current.second.opponent.totalScore
+                                else -> false
+                            }
+                        } == true) 1000000 - current.first.size else
                         (current.second.me.totalScore - gameState.me.score) * 10000 - Math.max(current.first.size, 1)
                     if (currentScore > bestValue) {
                         bestValue = currentScore
@@ -241,17 +263,19 @@ object FastSimulation : Simulation() {
                     }
                 }
             }
-            seen += 50
+            seen += 100
 
             if (q.isEmpty() || checkTime(stepStart)) break@loop
         }
+        System.err.println("Best score: $bestValue, q.size: ${q.size}")
         return bestFound!!
     }
 }
 
 fun botStep(currentState: GameState, stepStartMillis: Long): Move {
     // TODO small depth!
-    val bestAction = FastSimulation.findBestMove(currentState, stepStartMillis, 30)
+    val bestAction = FastSimulation.findBestMove(currentState, stepStartMillis, 33)
+    System.err.println("${bestAction.first.size} Steps: ${bestAction.first}")
     return bestAction.first.firstOrNull() ?: Rest
 }
 
@@ -262,13 +286,25 @@ fun warmUp(n: Int) {
     }
 }
 
+fun bestLearn(currentState: GameState): Action? {
+    if (currentState.learns.size < 10) {
+        val learnCanBePlayed = currentState.learns.filter { it.canBePlayedTimes(currentState) > 0 }
+        val onlyPositive = learnCanBePlayed.filter { it.deltas.all { it >= 0 } }.maxBy { it.totalDelta }
+        val maxSumWithIndex = learnCanBePlayed.maxBy { it.totalDelta - it.tomeIndex }?.takeIf { it.totalDelta > 0 }
+        return onlyPositive ?: maxSumWithIndex
+    } else return null
+}
+
 fun main(args: Array<String>) {
     val input = Scanner(System.`in`)
 
     warmUp(10)
     FastSimulation.resetState()
+    System.gc()
 
     var step = 0
+    var lastState: GameState? = null
+    var timeToLearn = true
     // game loop
     while (true) {
         step++;
@@ -308,22 +344,34 @@ fun main(args: Array<String>) {
                 val inv2 = input.nextInt()
                 val inv3 = input.nextInt()
                 val score = input.nextInt() // amount of rupees
-                yield(Player(inv0, inv1, inv2, inv3, score))
+                val potions = if (score == 0) 0 else if (i == 0) {
+                    if (lastState!!.me.score < score) lastState!!.me.potions + 1 else lastState!!.me.potions
+                } else {
+                    if (lastState!!.opponent.score < score) lastState!!.opponent.potions + 1 else lastState!!.opponent.potions
+                }
+                yield(Player(inv0, inv1, inv2, inv3, score, potions))
             }
         }.toList()
         val currentState = GameState(step, players[0], players[1], actions)
+        if (lastState != null) {
+            timeToLearn = step < 5 || (timeToLearn && currentState.opponentCasts.size > lastState!!.opponentCasts.size)
+        }
         //endregion
 
-        // Write an action using println()
-        // To debug: System.err.println("Debug messages...");
-
-        // in the first league: BREW <id> | WAIT; later: BREW <id> | CAST <id> [<times>] | LEARN <id> | REST | WAIT
-        RealGame.makeMove(currentState, botStep(currentState, stepStart))
+        if (timeToLearn) {
+            RealGame.makeMove(
+                currentState,
+                Learn(currentState.learns.find { it.tomeIndex == 0 }!!)
+            )
+        } else {
+            RealGame.makeMove(currentState, botStep(currentState, stepStart))
+        }
 
         System.gc()
 
         val stepTime = System.currentTimeMillis() - stepStart
         System.err.println("Step time: $stepTime, seen: ${FastSimulation.seen}")
         FastSimulation.resetState()
+        lastState = currentState
     }
 }
